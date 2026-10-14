@@ -2,12 +2,14 @@ import torch
 import torchaudio
 import torchaudio.transforms as T
 from huggingface_hub import hf_hub_download
+from pathlib import Path
 
-# ── 1. Download weights ────────────────────────────────────────────────────
-ckpt_path = hf_hub_download(
-    repo_id="AntoineNaccache/drone-audio-detector",
-    filename="drone_classifier_aug_mixed.pt",
-)
+# load weights
+ckpt_path = Path("drone_classifier_aug_mixed.pt")
+
+if not ckpt_path.is_file():
+    raise FileNotFoundError(f"Model weights not found: {ckpt_path}")
+
 
 # ── 2. Define or import the model ─────────────────────────────────────────
 # Option A: download model.py from the repo and place it next to your script,
@@ -40,15 +42,18 @@ class DroneClassifier(nn.Module):
         x, _ = self.gru(x.permute(0, 3, 1, 2).reshape(B, T, C * F))
         return self.head(x.mean(1))
 
-# ── 3. Load checkpoint ─────────────────────────────────────────────────────
+# ── 3. Load checkpoint
 model = DroneClassifier()
 state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
 if "model_state_dict" in state:
     state = state["model_state_dict"]
 model.load_state_dict(state, strict=False)
 model.eval()
 
-# ── 4. Prepare a 1-second audio chunk (16 kHz mono) ───────────────────────
+
+
+# Input audio
 waveform, sr = torchaudio.load("drone.wav")
 if sr != 16_000:
     waveform = torchaudio.functional.resample(waveform, sr, 16_000)
@@ -59,6 +64,7 @@ mel_transform = T.MelSpectrogram(
     n_mels=64, f_min=50, f_max=5_500,
 )
 log_mel = (T.AmplitudeToDB()(mel_transform(waveform)) + 40) / 40  # ≈ [-1, 1]
+# note: use B later
 x = log_mel.unsqueeze(0)   # (1, 1, 64, T)
 
 # ── 5. Infer ───────────────────────────────────────────────────────────────
