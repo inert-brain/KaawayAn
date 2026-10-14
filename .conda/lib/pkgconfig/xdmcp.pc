@@ -1,0 +1,11 @@
+prefix=/mnt/08a1d383-df2e-4e60-9424-ec6b18439c91/GitHub/KaawayAn/.conda
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: Xdmcp
+Description: X Display Manager Control Protocol library
+Version: 1.1.5
+Requires: xproto
+Cflags: -I${includedir}
+Libs: -L${libdir} -lXdmcp

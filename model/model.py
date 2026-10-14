@@ -6,6 +6,7 @@ from pathlib import Path
 
 # load weights
 ckpt_path = Path("drone_classifier_aug_mixed.pt")
+test_audio_path = Path("drone_recordings/Binary_Drone_Audio/yes_drone/B_S2_D1_067-bebop_000_.wav")
 
 if not ckpt_path.is_file():
     raise FileNotFoundError(f"Model weights not found: {ckpt_path}")
@@ -54,7 +55,7 @@ model.eval()
 
 
 # Input audio
-waveform, sr = torchaudio.load("drone.wav")
+waveform, sr = torchaudio.load(test_audio_path)
 if sr != 16_000:
     waveform = torchaudio.functional.resample(waveform, sr, 16_000)
 waveform = waveform.mean(0, keepdim=True)[:, :16_000]   # mono, 1 s

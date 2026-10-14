@@ -1,0 +1,8 @@
+prefix=/mnt/08a1d383-df2e-4e60-9424-ec6b18439c91/GitHub/KaawayAn/.conda
+includedir=${prefix}/include
+
+Name: KBProto
+Description: KB extension headers
+Version: 1.0.7
+Cflags: -I${includedir}
+Requires: xproto >= 7.0.33
