@@ -4,6 +4,9 @@ import torchaudio.transforms as T
 from huggingface_hub import hf_hub_download
 from pathlib import Path
 
+
+# credits: https://huggingface.co/AntoineNaccache/drone-audio-detector
+
 # load weights
 ckpt_path = Path("drone_classifier_aug_mixed.pt")
 test_audio_path = Path("drone_recordings/Binary_Drone_Audio/yes_drone/B_S2_D1_067-bebop_000_.wav")
@@ -12,10 +15,12 @@ if not ckpt_path.is_file():
     raise FileNotFoundError(f"Model weights not found: {ckpt_path}")
 
 
-# ── 2. Define or import the model ─────────────────────────────────────────
+# ── 2. Define or import the model
+
 # Option A: download model.py from the repo and place it next to your script,
 #           then:  from model import DroneClassifier, load_classifier
-#
+
+
 # Option B: inline definition (copy from model.py in this repo)
 import torch.nn as nn
 

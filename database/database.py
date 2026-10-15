@@ -1,11 +1,11 @@
 import sqlite3
+from time import t
 from pathlib import Path
 
 db_path = Path(__file__).parent/"events.db"
 
 class Database:
     def __init__(self):
-
         self.connection = sqlite3.connect(db_path)
         try:
             self.connection.execute("""
@@ -25,9 +25,15 @@ class Database:
             self.connection.close()
             raise
 
-    def start_event(self):
+    def log_event(self):
         self.connection.execute("""
+                INSERT INTO detection_events(
+                    predicted_drone,
+                    model_confidence,
+                    start_time
+                ) VALUES(
 
+                )
             """)
 
     def close(self):

@@ -2,3 +2,4 @@
 __pycache__/
 
 model/drone_recordings
+staging/test_stream.py
