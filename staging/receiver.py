@@ -66,7 +66,7 @@ class Receiver: # receives the input from the USB
     def start(self):
         if self._connection is None or not self._connection.is_open:
             raise RuntimeError("Receiver: open the connection first before starting")
-        if self._thread is not None and self._thread.is_alive:
+        if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("Receiver is already running")
 
         self._stop_event.clear()
@@ -95,7 +95,7 @@ class Receiver: # receives the input from the USB
                 buffer.extend(chunk)
 
                 while len(buffer) >= PACKET_BYTES:
-                    raw_bytes = bytes(chunk[:PACKET_BYTES])
+                    raw_bytes = bytes(buffer[:PACKET_BYTES])
                     del buffer[:PACKET_BYTES]
                     self.transform_packet(raw_bytes)
 
