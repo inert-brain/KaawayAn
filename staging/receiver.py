@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from threading import Event, Thread
-from queue import Queue
+from queue import Queue, Empty
 import serial
 from serial.tools import list_ports
 
@@ -104,6 +104,12 @@ class Receiver: # receives the input from the USB
         finally:
             self._stop_event.set()
 
+
+    def get_packet(self, timeout: float | None = None) -> tuple[int, int, np.ndarray] | None:
+        try:
+            return self.packet_queue.get(timeout=timeout)
+        except Empty:
+            return None
 
     def transform_packet(self, raw_bytes : bytes) -> bool:
         if len(raw_bytes) != PACKET_BYTES:

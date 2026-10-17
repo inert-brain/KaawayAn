@@ -3,6 +3,9 @@ import torchaudio
 import torchaudio.transforms as T
 from huggingface_hub import hf_hub_download
 from pathlib import Path
+import torch.nn as nn
+from threading import Thread, Event
+import numpy as np
 
 
 # credits: https://huggingface.co/AntoineNaccache/drone-audio-detector
@@ -14,15 +17,6 @@ test_audio_path = Path("drone_recordings/Binary_Drone_Audio/yes_drone/B_S2_D1_06
 if not ckpt_path.is_file():
     raise FileNotFoundError(f"Model weights not found: {ckpt_path}")
 
-
-# ── 2. Define or import the model
-
-# Option A: download model.py from the repo and place it next to your script,
-#           then:  from model import DroneClassifier, load_classifier
-
-
-# Option B: inline definition (copy from model.py in this repo)
-import torch.nn as nn
 
 def _conv_block(in_ch, out_ch):
     return nn.Sequential(
@@ -40,6 +34,20 @@ class DroneClassifier(nn.Module):
                             bidirectional=True, dropout=0.2)
         self.head  = nn.Sequential(nn.Linear(256, 64), nn.ReLU(True),
                                    nn.Dropout(0.3), nn.Linear(64, 1))
+        self.mel_transform = T.MelSpectrogram(
+            sample_rate=16_000, n_fft=512, hop_length=160,
+            n_mels=64, f_min=50, f_max=5_500,
+        )
+        self.state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        self.load_state()
+
+    def load_state(self):
+        state = self.state
+        if "model_state_dict" in state:
+            state = state["model_state_dict"]
+        self.load_state_dict(state, strict=False)
+        self.eval()
+
     def forward(self, x):
         x = self.pool1(self.enc1(x))
         x = self.pool2(self.enc2(x))
@@ -48,34 +56,13 @@ class DroneClassifier(nn.Module):
         x, _ = self.gru(x.permute(0, 3, 1, 2).reshape(B, T, C * F))
         return self.head(x.mean(1))
 
-# ── 3. Load checkpoint
-model = DroneClassifier()
-state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-
-if "model_state_dict" in state:
-    state = state["model_state_dict"]
-model.load_state_dict(state, strict=False)
-model.eval()
-
-
-
-# Input audio
-waveform, sr = torchaudio.load(test_audio_path)
-if sr != 16_000:
-    waveform = torchaudio.functional.resample(waveform, sr, 16_000)
-waveform = waveform.mean(0, keepdim=True)[:, :16_000]   # mono, 1 s
-
-mel_transform = T.MelSpectrogram(
-    sample_rate=16_000, n_fft=512, hop_length=160,
-    n_mels=64, f_min=50, f_max=5_500,
-)
-log_mel = (T.AmplitudeToDB()(mel_transform(waveform)) + 40) / 40  # ≈ [-1, 1]
-# note: use B later
-x = log_mel.unsqueeze(0)   # (1, 1, 64, T)
-
-# ── 5. Infer ───────────────────────────────────────────────────────────────
-with torch.no_grad():
-    prob = torch.sigmoid(model(x)).item()
-
-print(f"Drone probability: {prob:.3f}")
-print("DRONE DETECTED" if prob >= 0.5 else "No drone")
+    def predict(self, samples : np.ndarray) -> float:
+        arr = np.asarray(samples, dtype=np.float32).ravel()[:16_000] / 32768.0
+        waveform = torch.from_numpy(arr).unsqueeze(0)  # (1, N)
+        waveform = waveform.mean(0, keepdim=True)[:, :16_000]   # mono, 1 s
+        log_mel = (T.AmplitudeToDB()(self.mel_transform(waveform)) + 40) / 40  # ≈ [-1, 1]
+        x = log_mel.unsqueeze(0)   # (1, 1, 64, T)
+        with torch.no_grad():
+            prob = torch.sigmoid(self(x)).item()
+        print(f"prediction: {prob:/3f}")
+        return prob

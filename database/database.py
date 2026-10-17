@@ -15,6 +15,17 @@ class Database:
                                 CHECK (predicted_drone IN (0,1)),
                             model_confidence REAL NOT NULL
                                 CHECK (model_confidence IN (0,1)),
+                            timestamp TEXT NOT NULL,
+                            audio_path TEXT
+                        );
+                """)
+            self.connection.execute("""
+                        CREATE TABLE IF NOT EXISTS environment_samples(
+                            event_id INTEGER PRIMARY KEY,
+                            predicted_drone INTEGER NOT NULL
+                                CHECK (predicted_drone IN (0,1)),
+                            model_confidence REAL NOT NULL
+                                CHECK (model_confidence IN (0,1)),
                             start_time TEXT NOT NULL,
                             stop_time TEXT,
                             audio_path TEXT

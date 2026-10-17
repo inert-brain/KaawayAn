@@ -24,3 +24,8 @@ event_handler.py (with own thread)
 - gets packets from the receiver's queue 
 - feeds packets into a model
 - sends model predictions into a Database obj (own thread)
+
+
+1. where does timestamping happen? esp32
+Flow:
+Laptop -> sync message -> esp32 -> sync message -> laptop
