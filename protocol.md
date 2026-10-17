@@ -7,12 +7,16 @@ Sanity check on bandwidth: 32,002 B/s × 10 bits/byte (8-N-1 framing) ≈ 320 kb
 Not USB audio class, not HID, not raw bulk — plain UART-over-USB serial.
 
 
-MQ packet:
-[]
-MQ - | mic_id: int16 (2 B) | 16,000 samples × int16 (32,000 B) |
+unified packet (mic + BME):
+byte order and an exact CRC-16 variant
 
-BME 280 packet:
-[]
+1. [start marker] -- 2 bytes (fixed bytes)  
+2. [node ID] -- 2 bytes (uint16)
+3. [timestamp] -- 8 bytes (uint64)
+4. [BME values] -- 2 bytes (int16)
+5. [audio samples] -- 16000 x 2 bytes (int16)
+
+
 
 Formats:
 

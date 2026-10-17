@@ -1,5 +1,5 @@
 import numpy as np
-import time
+import struct
 from threading import Event, Thread
 from queue import Queue, Empty
 import serial
@@ -9,11 +9,12 @@ from config import Config
 
 
 PACKET_SAMPLES = Config.SAMPLING_RATE
-PACKET_BYTES = (1 + PACKET_SAMPLES) * 2
+PACKET_BYTES = Config.PACKET_BYTES
 BAUD_RATE = Config.BAUD_RATE
 PORTS = Config.PORTS
 CHUNK_SIZE = 4096
-
+PACKET_AUDIO_SAMPLES = Config.PACKET_AUDIO_SAMPLES
+PACKET_MARKER = Config.PACKET_MARKER
 
 class Receiver: # receives the input from the USB
     def __init__(self, ports: list[str], baudrate: int):
@@ -49,7 +50,7 @@ class Receiver: # receives the input from the USB
                 continue
 
             self._connection = connection
-            print(f"Opened port {port}", connection)
+            print(f"Opened port {port}")
             return port
 
         raise ConnectionError("No candidate port could be opened")
@@ -83,7 +84,6 @@ class Receiver: # receives the input from the USB
 
     def receive_loop(self):
         buffer = bytearray()
-
         try:
             while not self._stop_event.is_set() and self._connection:
                 chunk = self._connection.read(CHUNK_SIZE)
@@ -95,8 +95,14 @@ class Receiver: # receives the input from the USB
                 buffer.extend(chunk)
 
                 while len(buffer) >= PACKET_BYTES:
-                    raw_bytes = bytes(buffer[:PACKET_BYTES])
-                    del buffer[:PACKET_BYTES]
+                    start = buffer.find(PACKET_MARKER)
+                    if start == -1:
+                        del buffer[:-1]  # keep possible partial marker
+                        continue
+                    if len(buffer) - start < PACKET_BYTES:
+                        break  # wait for more bytes
+                    raw_bytes = bytes(buffer[start:start + PACKET_BYTES])
+                    del buffer[:start + PACKET_BYTES]
                     self.transform_packet(raw_bytes)
 
         except serial.SerialException as e:
@@ -105,20 +111,46 @@ class Receiver: # receives the input from the USB
             self._stop_event.set()
 
 
-    def get_packet(self, timeout: float | None = None) -> tuple[int, int, np.ndarray] | None:
+    def get_packet(self, timeout: float | None = None) -> tuple[int, int, np.ndarray, np.ndarray] | None:
         try:
             return self.packet_queue.get(timeout=timeout)
         except Empty:
             return None
 
-    def transform_packet(self, raw_bytes : bytes) -> bool:
-        if len(raw_bytes) != PACKET_BYTES:
-            print("Receiver: packet rejected")
-            return False
 
-        arr = np.frombuffer(raw_bytes, dtype="<i2")
-        timestamp = time.time_ns()
-        node_id = int(arr[0])
-        samples = arr[1:]
-        self.packet_queue.put((timestamp, node_id, samples))
+    def verify_bytes(self, raw_bytes):
+        if len(raw_bytes) != PACKET_BYTES:
+            print("Receiver: packet rejected -- differentt size")
+            return None
+        if raw_bytes[:2] != PACKET_MARKER:
+            print("Receiver: packet rejected -- different packet marker")
+            return None
+        return raw_bytes
+
+    def transform_packet(self, raw_bytes : bytes) -> bool:
+        if self.verify_bytes(raw_bytes) is None:
+            return False
+        node_id, timestamp, temperature, humidity, pressure = (
+            struct.unpack_from("<HQhHH", raw_bytes, offset=2)
+        )
+
+        bme = np.array(
+            [temperature / 100.0, humidity / 100.0, pressure / 10.0],
+            dtype=np.float32
+        )
+
+        samples = np.frombuffer(
+            raw_bytes,
+            dtype="<i2",
+            count=1600,
+            offset=18,
+        )
+
+        self.packet_queue.put((node_id, timestamp, bme, samples))
         return True
+
+# 1. [start marker] -- 2 bytes (fixed bytes)
+# 2. [node ID] -- 2 bytes (uint16)
+# 3. [timestamp] -- 8 bytes (uint64)
+# 4. [BME values] -- 3 x 2 bytes (int16)
+# . [audio samples] -- 1600 x 2 bytes (int16)
