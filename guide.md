@@ -29,3 +29,7 @@ event_handler.py (with own thread)
 1. where does timestamping happen? esp32
 Flow:
 Laptop -> sync message -> esp32 -> sync message -> laptop
+
+1. change transform_packet to remove timestamps
+2. add logic for BME
+3. database pipeline
