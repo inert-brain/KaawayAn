@@ -26,7 +26,7 @@ class Receiver: # receives the input from the USB
         self._connection : serial.Serial | None = None # bruh whyyyy
         self._thread : Thread | None = None
         self._stop_event = Event()
-        self._time_offset_marker : bytes = b"\x1\x1"
+ #       self._time_offset_marker : bytes = b'\x1\x1'
         self._time_offset : int
 
 

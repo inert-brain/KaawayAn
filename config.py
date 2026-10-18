@@ -23,13 +23,3 @@ class Config:
 # 3. [timestamp] -- 8 bytes (uint64)
 # 4. [BME values] -- 3 x 2 bytes (int16)
 # . [audio samples] -- 1600 x 2 bytes (int16)
-
-
-
-dtoa
-sound_intensity
-
-direction ng mic
-
-number of mics per node -- square na even distance or yung one with 10 cm
- 1. )
