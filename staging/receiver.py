@@ -102,16 +102,24 @@ class Receiver: # receives the input from the USB
         return False
 
 
-
     def receive_loop(self):
         buffer = bytearray()
+        empty_reads = 0
         try:
             while not self._stop_event.is_set() and self._connection:
                 chunk = self._connection.read(CHUNK_SIZE)
 
                 if not chunk:
-                    print("Receiver: skipped a chunk")
+                    empty_reads += 1
+                    if self._connection is None or not self._connection.is_open:
+                        print("Receiver: skipped a chunk (port closed)")
+                    elif empty_reads == 1:
+                        print("Receiver: skipped a chunk (read timeout: ESP32 sent nothing in 1 s)")
+                    elif empty_reads % 10 == 0:
+                        print(f"Receiver: still silent after {empty_reads} timeouts "
+                              f"(buffer={len(buffer)} B, port={self._connection.port})")
                     continue
+                empty_reads = 0
 
                 buffer.extend(chunk)
 
@@ -141,10 +149,11 @@ class Receiver: # receives the input from the USB
 
     def verify_bytes(self, raw_bytes):
         if len(raw_bytes) != PACKET_BYTES:
-            print("Receiver: packet rejected -- differentt size")
+            print(f"Receiver: packet rejected -- size {len(raw_bytes)} != {PACKET_BYTES}")
             return None
         if raw_bytes[:2] != PACKET_MARKER:
-            print("Receiver: packet rejected -- different packet marker")
+            print(f"Receiver: packet rejected -- marker {raw_bytes[:2].hex(' ')} "
+                  f"!= {PACKET_MARKER.hex(' ')} (len={len(raw_bytes)})")
             return None
         return raw_bytes
 
@@ -169,6 +178,10 @@ class Receiver: # receives the input from the USB
         )
 
         self.packet_queue.put((node_id, timestamp, bme, samples))
+        s = np.asarray(samples)
+        print(f"Receiver: pkt node={node_id} ts={timestamp} len={len(raw_bytes)} "
+              f"bme=[{temperature / 100.0:.2f}C {humidity / 100.0:.2f}% {pressure / 10.0:.1f}hPa] "
+              f"audio_n={s.size} min={s.min()} max={s.max()} mean={s.mean():.1f}")
         return True
 
 # 1. [start marker] -- 2 bytes (fixed bytes)

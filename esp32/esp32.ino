@@ -1,11 +1,9 @@
-// KaawayAn sensor node: ESP32 + INMP441 (I2S) + BME280 (I2C) -> USB CDC.
+// KaawayAn sensor node: ESP32 + INMP441 (I2S) -> USB CDC.
 // Packet: protocol.md v1 (marker BA AB, node u16, ts u64 us, BME, 1600x int16 LE).
-// Needs: "esp32" board pkg, Adafruit_BME280 + Adafruit Unified Sensor libs.
+// BME fields currently send placeholders (reconnect sensor later; see below).
+// Needs: "esp32" board pkg only.
 // NOTE: this Serial carries BINARY. ASCII ERR lines are rejected by the
 // receiver as garbage (it rescans for the marker), so errors cost ~1 packet.
-#include <Wire.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
 #include <driver/i2s.h>
 #include <esp_timer.h>
 
@@ -17,7 +15,11 @@
 #define I2S_SCK     14
 #define I2S_WS      15
 #define I2S_SD      32
-#define BME_ADDR    0x76          // try 0x77 if "ERR bme init" below
+// BME placeholders (temp/hum/press). Re-enable the BME280 later by
+// including Adafruit_BME280, initing Wire, and replacing these three lines.
+#define BME_TEMP    0             // 0.00 C
+#define BME_HUM     0             // 0.00 %RH
+#define BME_PRESS   10132         // 1013.2 hPa
 
 struct __attribute__((packed)) Header {
     uint8_t  marker[2];
@@ -28,19 +30,15 @@ struct __attribute__((packed)) Header {
     uint16_t press;   // hPa x10
 };
 
-Adafruit_BME280 bme;
 int32_t i2s_buf[AUDIO_N];
 int16_t audio[AUDIO_N];
-Header h = {{0xBA, 0xAB}, NODE_ID, 0, 0, 0, 0};
-float last_t = 24.0, last_h = 50.0, last_p = 1013.0;
+Header h = {{0xBA, 0xAB}, NODE_ID, 0, BME_TEMP, BME_HUM, BME_PRESS};
 
 void halt(const char *msg) { Serial.println(msg); while (1) delay(1000); }
 
 void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(1500);  // allow USB CDC enumerate; human-readable only below this line
-    Wire.begin();  // SDA=21, SCL=22
-    if (!bme.begin(BME_ADDR)) halt("ERR bme init: check wiring/addr (0x76 vs 0x77)");
     i2s_config_t cfg = {
         .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
         .sample_rate = 16000,
@@ -59,9 +57,6 @@ void setup() {
 }
 
 void loop() {
-    float t = bme.readTemperature(), hh = bme.readHumidity(), pp = bme.readPressure() / 100.0;
-    if (!isnan(t)) last_t = t; if (!isnan(hh)) last_h = hh; if (!isnan(pp)) last_p = pp;
-
     size_t n = 0;
     esp_err_t r = i2s_read(I2S_NUM_0, i2s_buf, sizeof(i2s_buf), &n, portMAX_DELAY);
     if (r != ESP_OK || n != sizeof(i2s_buf)) {  // rare; receiver resyncs on next marker
@@ -71,9 +66,17 @@ void loop() {
     for (int i = 0; i < AUDIO_N; i++) audio[i] = (int16_t)(i2s_buf[i] >> MIC_SHIFT);
 
     h.t_us = esp_timer_get_time();
-    h.temp = (int16_t)(last_t * 100);
-    h.hum = (uint16_t)(last_h * 100);
-    h.press = (uint16_t)(last_p * 10);
+    // BME placeholders stay fixed; header already holds BME_* defines
+    // status BEFORE the binary frame (ASCII line is skipped by receiver resync).
+    // marker=node/t/BME/audio-min/max: one line per packet, ~10 lines/s.
+    int16_t mn = audio[0], mx = audio[0];
+    for (int i = 1; i < AUDIO_N; i++) {
+        if (audio[i] < mn) mn = audio[i];
+        if (audio[i] > mx) mx = audio[i];
+    }
+    Serial.printf("PKT mk=%02X%02X node=%u ts=%llu bme=[%d %u %u] n=%d min=%d max=%d\n",
+        h.marker[0], h.marker[1], h.node_id, (unsigned long long)h.t_us,
+        h.temp, h.hum, h.press, AUDIO_N, mn, mx);
     Serial.write((uint8_t *)&h, sizeof(h));  // 18 bytes LE (ESP32 is LE)
     Serial.write((uint8_t *)audio, sizeof(audio));  // 3200 bytes; total 3218
     // loop paces itself: 1600 samples @16kHz == ~100 ms per packet
