@@ -1,24 +1,25 @@
-"""Receiver -> model inference testbench. Run from KaawayAn/.
+"""Full-pipeline testbench: FakeESP32 -> Receiver -> Handler -> Classifier -> DB.
 
-Streams real .wav files from model/drone_recordings through a virtual
-serial pair (FakeESP32 -> pty -> Receiver), then runs DroneClassifier
-on each received packet.
+Builds the new unified packet (marker + node + timestamp + BME + 1600
+audio samples = 3218 bytes) from real .wavs in model/drone_recordings,
+streams them through a virtual serial pair, runs the real pipeline,
+then dumps the detection_events table to prove predictions were logged.
 
-Usage:
-    python staging/test_inference.py                  # 4 files, mixed labels
-    python staging/test_inference.py --n=8             # first 8 files per label
-    python staging/test_inference.py --label=yes_drone # drones only
-    python staging/test_inference.py --label=unknown   # non-drones only
+Usage (from KaawayAn/):
+    python staging/test_inference.py                # 2 files per label
+    python staging/test_inference.py --n=4           # 4 files per label
+    python staging/test_inference.py --label=yes_drone
 """
 import os
 import pty
 import random
+import sqlite3
+import struct
 import sys
 import threading
 import time
 import tty
 from pathlib import Path
-from queue import Empty
 
 import numpy as np
 import serial as pyserial
@@ -29,36 +30,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))          # staging/
 
 from config import Config
 from staging.receiver import Receiver
+from event_handler.handler import Handler
 from model.model import DroneClassifier
+from database.database import Database
 
 RECORDINGS = Path(__file__).resolve().parent.parent / "model" / "drone_recordings" / "Binary_Drone_Audio"
 LABELS = {"yes_drone": 1, "unknown": 0}
+PACKETS_PER_WINDOW = Config.SAMPLING_RATE // Config.PACKET_AUDIO_SAMPLES  # 10
+
+# audio larger than int16 range is clipped, matching ESP32 ADC saturation
+PCM_SCALE = 20000.0
 
 
-def load_packet_samples(wav_path: Path, rng: random.Random) -> bytes:
-    """Load a wav, take/pad to 16k mono int16, prepend a random node_id."""
+def wav_to_chunks(wav_path: Path) -> list[np.ndarray]:
+    """Load a wav, normalize to mono float, split into 1600-sample int16 chunks."""
     waveform, sr = torchaudio.load(str(wav_path))
     assert sr == 16_000, f"{wav_path}: expected 16kHz, got {sr}"
-    mono = waveform.mean(0)  # (N,) float32 in [-1, 1]
-    if mono.numel() < 16_000:
-        mono = torch_pad(mono, 16_000)
-    mono = mono[:16_000]
-    pcm = (mono.clamp(-1.0, 1.0).numpy() * 32767).astype("<i2")
-    arr = np.empty(1 + pcm.size, dtype="<i2")
-    arr[0] = rng.randint(0, 9)  # random node_id
-    arr[1:] = pcm
-    return arr.tobytes()
+    mono = waveform.mean(0).numpy()
+    pcm = np.clip(mono * PCM_SCALE, -32768, 32767).astype("<i2")
+    return [pcm[i:i + Config.PACKET_AUDIO_SAMPLES]
+            for i in range(0, len(pcm), Config.PACKET_AUDIO_SAMPLES)
+            if len(pcm[i:i + Config.PACKET_AUDIO_SAMPLES]) == Config.PACKET_AUDIO_SAMPLES]
 
 
-def torch_pad(mono, n: int):
-    import torch
-    out = torch.zeros(n, dtype=mono.dtype)
-    out[:mono.numel()] = mono
-    return out
+def make_packet(node_id: int, timestamp: int, samples: np.ndarray, rng: random.Random) -> bytes:
+    """Build one unified packet per config.py layout."""
+    assert samples.size == Config.PACKET_AUDIO_SAMPLES
+    header = struct.pack(
+        "<2sHQhHH",
+        Config.PACKET_MARKER,
+        node_id,
+        timestamp,
+        rng.randint(2000, 3200),    # temperature x100 (20-32 C)
+        rng.randint(4000, 8000),    # humidity x100
+        rng.randint(10090, 10200),  # pressure x10
+    )
+    assert len(header) == 18, len(header)
+    return header + np.ascontiguousarray(samples, dtype="<i2").tobytes()
 
 
 def fake_esp32(master_fd: int, payloads: list[bytes], stop_event: threading.Event) -> None:
-    """Write each packet in small chunks, ~1 pkt/sec like the real ESP32."""
     try:
         for raw in payloads:
             if stop_event.is_set():
@@ -68,19 +79,19 @@ def fake_esp32(master_fd: int, payloads: list[bytes], stop_event: threading.Even
                     return
                 os.write(master_fd, raw[off:off + 1024])
                 time.sleep(0.002)
-            time.sleep(0.2)
+            time.sleep(0.05)
     except OSError as e:
         print(f"fake_esp32 stopped: {e}")
 
 
 def main() -> None:
     args = dict(a.split("=", 1) if "=" in a else (a, True) for a in sys.argv[1:] if a.startswith("--"))
-    n_per_label = int(args.get("--n", 4))
+    n_per_label = int(args.get("--n", 2))
     label_filter = args.get("--label", True)
     labels = [label_filter] if label_filter in LABELS else sorted(LABELS)
 
     rng = random.Random(42)
-    jobs: list[tuple[Path, int]] = []  # (wav, expected_label)
+    jobs: list[tuple[Path, int]] = []
     for label in labels:
         wavs = sorted((RECORDINGS / label).glob("*.wav"))[:n_per_label]
         if not wavs:
@@ -88,51 +99,84 @@ def main() -> None:
             continue
         jobs += [(w, LABELS[label]) for w in wavs]
     rng.shuffle(jobs)
-    print(f"Streaming {len(jobs)} files: " + ", ".join(f"{w.name}(exp={e})" for w, e in jobs))
-    payloads = [load_packet_samples(w, rng) for w, _ in jobs]
+    if not jobs:
+        print("No input files. Aborting.")
+        return
 
+    # one node per file so windows never mix labels; 10+ packets per file
+    payloads: list[bytes] = []
+    expected_windows: list[tuple[int, int]] = []  # (node_id, expected_label)
+    ts = time.time_ns()
+    for node_id, (wav, expected) in enumerate(jobs):
+        chunks = wav_to_chunks(wav)[:PACKETS_PER_WINDOW]
+        assert len(chunks) == PACKETS_PER_WINDOW, f"{wav.name}: too short for one window"
+        for c in chunks:
+            payloads.append(make_packet(node_id, ts, c, rng))
+            ts += 100_000_000  # 100ms per 1600-sample packet
+        expected_windows.append((node_id, expected))
+        print(f"  queued {wav.name} as node={node_id} exp={expected}")
+
+    # Database() resolves to database/events.db on its own — no override
     master_fd, slave_fd = pty.openpty()
     slave_name = os.ttyname(slave_fd)
     stop_writer = threading.Event()
-    r = Receiver(ports=[], baudrate=Config.BAUD_RATE)
+    receiver = Receiver(ports=[], baudrate=Config.BAUD_RATE)
     model = DroneClassifier()
-    correct = total = 0
+    db = Database()
     try:
         tty.setraw(slave_fd)
-        r._connection = pyserial.Serial(port=slave_name, baudrate=Config.BAUD_RATE, timeout=1)  # type: ignore[assignment]
-        tty.setraw(r._connection.fileno())
+        receiver._connection = pyserial.Serial(  # type: ignore[assignment]
+            port=slave_name, baudrate=Config.BAUD_RATE, timeout=1)
+        tty.setraw(receiver._connection.fileno())
+        handler = Handler(receiver, model, db)  # Handler.__init__ calls receiver.start()
         threading.Thread(target=fake_esp32, args=(master_fd, payloads, stop_writer), daemon=True).start()
-        r.start()
-        deadline = time.time() + len(jobs) * 5 + 10
-        idx = 0
-        while idx < len(jobs) and time.time() < deadline:
-            try:
-                _, node_id, samples = r.packet_queue.get(timeout=2)
-            except Empty:
-                continue
-            wav, expected = jobs[idx]
-            idx += 1
-            prob = model.predict(np.asarray(samples))
-            pred = 1 if prob >= 0.5 else 0
+        handler.enable_pipeline()
+        threading.Thread(target=handler.classifier_pipeline.enable_pipeline, daemon=True).start()
+        print(f"\nStreaming {len(payloads)} packets -> {len(expected_windows)} windows...")
+        deadline = time.time() + len(payloads) * 0.5 + 20
+        while time.time() < deadline:
+            with db._lock:
+                n = db.connection.execute("SELECT COUNT(*) FROM detection_events").fetchone()[0]
+            if n >= len(expected_windows):
+                break
+            time.sleep(0.5)
+
+        with db._lock:
+            rows = db.connection.execute(
+                "SELECT node_id, predicted_drone, model_confidence, timestamp "
+                "FROM detection_events ORDER BY event_id").fetchall()
+        print(f"\nDB holds {len(rows)} prediction(s):")
+        exp_by_node = dict(expected_windows)
+        correct = 0
+        for node_id, pred, conf, stamp in rows:
+            expected = exp_by_node.get(node_id, "?")
             ok = pred == expected
             correct += ok
-            total += 1
-            print(f"[{idx}/{len(jobs)}] {wav.name} node={node_id} "
-                  f"prob={prob:.3f} pred={pred} exp={expected} {'OK' if ok else 'MISS'}")
-        print(f"\nAccuracy: {correct}/{total} = {correct / max(total, 1):.2%}")
+            print(f"  node={node_id} pred={pred} conf={conf:.3f} exp={expected} "
+                  f"{'OK' if ok else 'MISS'} ts={stamp}")
+        print(f"\nWindow accuracy: {correct}/{len(rows)} = "
+              f"{correct / max(len(rows), 1):.2%}")
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
         stop_writer.set()
+        handler.classifier_pipeline.stop()
         try:
-            r.disconnect()
+            receiver.disconnect()
         except Exception as e:  # noqa: BLE001 - best-effort teardown
             print(f"disconnect: {e}")
+        db.close()
         for fd in (master_fd, slave_fd):
             try:
                 os.close(fd)
             except OSError:
                 pass
+        # show raw file as proof; rows persist in database/events.db
+        from database.database import db_path as real_db_path
+        if real_db_path.exists():
+            check = sqlite3.connect(str(real_db_path))
+            print("Rows in file:", check.execute("SELECT COUNT(*) FROM detection_events").fetchone()[0])
+            check.close()
 
 
 if __name__ == "__main__":

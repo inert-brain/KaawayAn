@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from pathlib import Path
 
 
@@ -28,15 +29,16 @@ class Database:
             raise
 
     def log_classifier_prediction(self, node_id: int, predicted_drone: int, model_confidence: float, timestamp: int) -> None:
-        self.connection.execute("""
-                INSERT INTO detection_events(
-                    node_id,
-                    predicted_drone,
-                    model_confidence,
-                    timestamp
-                ) VALUES(?, ?, ?, ?)
-            """, (node_id, predicted_drone, float(model_confidence), str(timestamp)))
-        self.connection.commit()
+        with self._lock:
+            self.connection.execute("""
+                    INSERT INTO detection_events(
+                        node_id,
+                        predicted_drone,
+                        model_confidence,
+                        timestamp
+                    ) VALUES(?, ?, ?, ?)
+                """, (node_id, predicted_drone, float(model_confidence), str(timestamp)))
+            self.connection.commit()
 
     def close(self):
         self.connection.close()
