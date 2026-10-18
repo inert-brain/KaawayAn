@@ -10,7 +10,7 @@
 #define NODE_ID     3
 #define SERIAL_BAUD 921600
 #define AUDIO_N     1600   // 100 ms @16kHz; 10 pkts = 1 inference window
-#define MIC_SHIFT   11     // INMP441 24-in-32 to int16 gain trim
+#define MIC_GAIN_DB   12     // extra gain on top of correct >>16 (0 = native level)
 #define I2S_SCK     1      // D0
 #define I2S_WS      2      // D1
 #define I2S_SD      4      // D3 (GPIO3 avoided: strapping pin)
@@ -71,9 +71,16 @@ void loop() {
         Serial.printf("ERR i2s short: %d/%d bytes\n", (int)n, (int)sizeof(i2s_buf));
         if (n < sizeof(i2s_buf)) memset((uint8_t *)i2s_buf + n, 0, sizeof(i2s_buf) - n);
     }
+    // INMP441 sends 24-bit audio left-justified in 32-bit slots (S24 << 8),
+    // so >>16 takes the true top 16 bits. Extra gain via shift, then SATURATE
+    // (never bare-cast: overflow must clip, not wrap modulo 65536).
     int16_t mn = INT16_MAX, mx = INT16_MIN;
     for (int i = 0; i < AUDIO_N; i++) {
-        audio[i] = (int16_t)(i2s_buf[i] >> MIC_SHIFT);
+        int32_t v = i2s_buf[i] >> 16;
+        v <<= (MIC_GAIN_DB / 6);  // ~6 dB per bit; 12 dB = x4
+        if (v > 32767) v = 32767;
+        else if (v < -32768) v = -32768;
+        audio[i] = (int16_t)v;
         if (audio[i] < mn) mn = audio[i];
         if (audio[i] > mx) mx = audio[i];
     }
