@@ -4,6 +4,8 @@ from threading import Event, Thread
 from queue import Queue, Empty
 import serial
 from serial.tools import list_ports
+import time
+from time import time_ns
 
 from config import Config
 
@@ -24,6 +26,8 @@ class Receiver: # receives the input from the USB
         self._connection : serial.Serial | None = None # bruh whyyyy
         self._thread : Thread | None = None
         self._stop_event = Event()
+        self._time_offset_marker : bytes = b"\x1\x1"
+        self._time_offset : int
 
 
     def connect(self) -> str:
@@ -82,6 +86,23 @@ class Receiver: # receives the input from the USB
             self._thread = None
 
 
+    def sync_clock(self, timeout: float = 2.0) -> bool:
+        if self._connection is None:
+            raise RuntimeError("no connection")
+        self._connection.write(struct.pack("<Q", time_ns()))  # needs: from time import time_ns; import struct
+        deadline = time.monotonic() + timeout
+        buf = bytearray()
+        while time.monotonic() < deadline:
+            buf.extend(self._connection.read(64))
+            if self._time_offset_marker in buf:  # ESP32 replies after applying offset
+
+                print("time offset updated")
+                return True
+        print("clock sync timeout")
+        return False
+
+
+
     def receive_loop(self):
         buffer = bytearray()
         try:
@@ -126,6 +147,7 @@ class Receiver: # receives the input from the USB
             print("Receiver: packet rejected -- different packet marker")
             return None
         return raw_bytes
+
 
     def transform_packet(self, raw_bytes : bytes) -> bool:
         if self.verify_bytes(raw_bytes) is None:
