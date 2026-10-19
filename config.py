@@ -4,7 +4,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
 
-    PORTS = ["COM19", "COM1"]
+    PORTS = ["COM19", "/dev/ttyACM0"]
 
     PACKET_MARKER = b"\xBA\xAB"
     # model input dimensions

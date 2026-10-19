@@ -26,6 +26,8 @@ class Receiver: # receives the input from the USB
         self._connection : serial.Serial | None = None # bruh whyyyy
         self._thread : Thread | None = None
         self._stop_event = Event()
+        self._last_stats : tuple | None = None  # (min, max, mean) of previous packet
+        self._repeat_count = 0
  #       self._time_offset_marker : bytes = b'\x1\x1'
         self._time_offset : int
 
@@ -176,12 +178,24 @@ class Receiver: # receives the input from the USB
             count=1600,
             offset=18,
         )
-
         self.packet_queue.put((node_id, timestamp, bme, samples))
         s = np.asarray(samples)
-        print(f"Receiver: pkt node={node_id} ts={timestamp} len={len(raw_bytes)} "
-              f"bme=[{temperature / 100.0:.2f}C {humidity / 100.0:.2f}% {pressure / 10.0:.1f}hPa] "
-              f"audio_n={s.size} min={s.min()} max={s.max()} mean={s.mean():.1f}")
+        mn, mx, mean = int(s.min()), int(s.max()), round(float(s.mean()), 1)
+        stats = (mn, mx, mean)
+        if stats == self._last_stats:
+            self._repeat_count += 1
+            if mn == 0 and mx == 0:
+                print(f"Receiver: pkt node={node_id} audio_n={s.size} "
+                      f"STALE x{self._repeat_count}: all-zero (dead mic / slept WS / timeout pad)")
+            else:
+                print(f"Receiver: pkt node={node_id} audio_n={s.size} "
+                      f"STALE x{self._repeat_count}: frozen DMA (min={mn} max={mx} mean={mean})")
+        else:
+            self._repeat_count = 0
+            self._last_stats = stats
+            print(f"Receiver: pkt node={node_id} ts={timestamp} len={len(raw_bytes)} "
+                  f"bme=[{temperature / 100.0:.2f}C {humidity / 100.0:.2f}% {pressure / 10.0:.1f}hPa] "
+                  f"audio_n={s.size} min={mn} max={mx} mean={mean}")
         return True
 
 # 1. [start marker] -- 2 bytes (fixed bytes)
