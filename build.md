@@ -41,8 +41,8 @@ REM conda create -n kaawayan python=3.11 -y && conda activate kaawayan
 REM 2. PyTorch CPU (Windows). If this fails, follow https://pytorch.org/get-started/locally/
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-REM 3. Everything else (single line):
-pip install pyserial "numpy<2"
+# 3. Everything else (single line):
+pip install pyserial "numpy<2" streamlit
 
 REM 4. Verify the weights file exists (fatal if missing):
 dir model\drone_classifier_aug_mixed.pt

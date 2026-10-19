@@ -9,6 +9,9 @@ class Database:
     def __init__(self):
         self.connection = sqlite3.connect(db_path, check_same_thread=False)
         self._lock = threading.Lock()
+        # WAL: dashboard readers never block pipeline writes (see dashboard_plan).
+        self.connection.execute("PRAGMA journal_mode=WAL;")
+        self.connection.execute("PRAGMA busy_timeout=5000;")
 
         try:
             self.connection.execute("""
