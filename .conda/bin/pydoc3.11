@@ -1,5 +1,0 @@
-#!/mnt/08a1d383-df2e-4e60-9424-ec6b18439c91/GitHub/KaawayAn/.conda/bin/python3.11
-
-import pydoc
-if __name__ == '__main__':
-    pydoc.cli()

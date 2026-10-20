@@ -1,7 +1,0 @@
-prefix=/mnt/08a1d383-df2e-4e60-9424-ec6b18439c91/GitHub/KaawayAn/.conda
-includedir=${prefix}/include
-
-Name: XF86DRIProto
-Description: XF86DRI extension headers
-Version: 2.1.1
-Cflags: -I${includedir}/X11/dri

@@ -1,7 +1,0 @@
-prefix=/mnt/08a1d383-df2e-4e60-9424-ec6b18439c91/GitHub/KaawayAn/.conda
-includedir=${prefix}/include
-
-Name: DRI2Proto
-Description: DRI2 extension headers
-Version: 2.8
-Cflags: -I${includedir}
