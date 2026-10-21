@@ -2,7 +2,7 @@
 
 Run from repo root:  streamlit run dashboard/dashboard.py
 Read-only: never writes to events.db. Live region refreshes via
-st.fragment(run_every=2); static templates are cached per process.
+st.fragment(run_every=1); static templates are cached per process.
 """
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +43,7 @@ except ImportError:  # running as script: dashboard/ itself is on sys.path
     )
 
 ASSETS = Path(__file__).parent / "ui_assets"
-REFRESH_S = 2
+REFRESH_S = 1
 ONLINE_STALE_S = 30  # no DB write within this long -> node considered stale
 
 
