@@ -4,7 +4,8 @@
 // Wiring (per pin plan):
 //   3V3->mic VDD x2 + BME VCC | GND->mic GND x2 + BME GND
 //   SCK D8(GPIO7)->mic SCK x2 | WS D9(GPIO8)->mic WS x2 | SD D10(GPIO9)->mic SD x2
-//   M1 L/R->GND (left slot), M2 L/R->3V3 (right slot), mixed to mono in firmware
+//   M1 L/R->GND (left slot), M2 L/R->3V3 (right slot), M2-ONLY for now.
+//   To restore dual-mic mix: set ACTIVE_MIC_IS_M2 below from 1 back to 0.
 //   BME SDA->D4(GPIO5), SCL->D5(GPIO6), CSB->3V3, SDO->GND (addr 0x76)
 // NOTE: Serial carries BINARY + one PKT status line per packet. Receiver resyncs
 // on the marker, so the ASCII line is skipped as garbage (costs nothing).
@@ -18,6 +19,7 @@
 #define SERIAL_BAUD 921600
 #define AUDIO_N     1600   // mono output; 10 pkts = 1 inference window
 #define MIC_GAIN_DB 0      // extra gain after L+R mix + DC removal (0 = native level)
+// Mic select: 0 = dual-mic mix (default), 1 = M2-only (right slot). Revert to 0 to restore.
 #define I2S_SCK     7      // D8
 #define I2S_WS      8      // D9
 #define I2S_SD      9      // D10 (both mics joined)
@@ -25,6 +27,7 @@
 #define I2C_SCL     6      // D5
 #define BME_ADDR    0x76   // SDO->GND, CSB->3V3 selects I2C mode
 #define LED_PIN     21     // XIAO USER_LED, active LOW
+#define ACTIVE_MIC_IS_M2 1 // 1 = M2-only (right slot), 0 = dual-mic mix
 
 struct __attribute__((packed)) Header {
     uint8_t  marker[2];
@@ -89,12 +92,18 @@ void loop() {
     }
     // Left-justified 24-in-32: >>16 takes top 16 bits per slot. Mix L+R to mono,
     // remove DC with a slow tracker, then gain + SATURATE (overflow clips, never wraps).
+    // ACTIVE_MIC_IS_M2=1: M2-only (right slot), M1 ignored. Set to 0 to restore mix.
     static int32_t dc_est = 0;
     int16_t mn = INT16_MAX, mx = INT16_MIN;
     for (int i = 0; i < AUDIO_N; i++) {
-        int32_t l = i2s_buf[2 * i] >> 16;      // M1 (L/R->GND, left slot)
-        int32_t r2 = i2s_buf[2 * i + 1] >> 16; // M2 (L/R->3V3, right slot)
-        int32_t v = (l + r2) / 2;
+        int32_t l = i2s_buf[2 * i] >> 16;      // M1 (L/R->GND, left slot) — ignored while M2-only
+        int32_t r2 = i2s_buf[2 * i + 1] >> 16; // M2 (L/R->3V3, right slot) — ACTIVE
+#if ACTIVE_MIC_IS_M2
+        (void)l;
+        int32_t v = r2;          // M2-only: full level, no /2
+#else
+        int32_t v = (l + r2) / 2; // dual-mic mix (default)
+#endif
         dc_est += (v - dc_est) >> 10;  // ~1000-sample time constant, inaudible lag
         v -= dc_est;
         v <<= (MIC_GAIN_DB / 6);  // ~6 dB per bit; 12 dB = x4

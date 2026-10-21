@@ -21,13 +21,19 @@ DUMP_DIR = "staging/dumps"
 
 
 def _dump_window(node_id: int, timestamp: int, samples: np.ndarray) -> None:
-    """TEMPORARY: write one inference window as 16kHz float WAV. Delete with block above."""
+    """TEMPORARY: write one inference window as 16kHz float WAV. Delete with block above.
+
+    subtype='FLOAT' makes the file bit-exact to what predict() sees:
+    predict() does int16 -> float32 / 32768.0 in memory; a default PCM_16
+    write would re-quantize to int16 (up to 1 LSB error). FLOAT stores the
+    exact float32 values, so sf.read() returns model input 1:1.
+    """
     import soundfile as sf
     from pathlib import Path as _P
     _P(DUMP_DIR).mkdir(parents=True, exist_ok=True)
     sf.write(f"{DUMP_DIR}/window_node{node_id}_{timestamp}.wav",
              np.asarray(samples, dtype=np.float32) / 32768.0,
-             Config.SAMPLING_RATE)
+             Config.SAMPLING_RATE, subtype='FLOAT')
 
 class ClassifierPipeline:
     def __init__ (self, model : DroneClassifier, database : Database, features_queue : Queue[tuple[int, int, np.ndarray]]):
