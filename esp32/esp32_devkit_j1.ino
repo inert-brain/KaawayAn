@@ -22,8 +22,7 @@
 //   WARNING: WS and L/R look alike but are different pins.
 //   WS goes to the ESP32 (GPIO8). L/R goes to a power rail (GND / 3V3).
 //
-// NOTE: Serial carries BINARY + one PKT status line per packet. Receiver resyncs
-// on the marker, so the ASCII line is skipped as garbage (costs nothing).
+// NOTE: Serial carries BINARY only after boot (no per-packet ASCII).
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
@@ -46,8 +45,7 @@
 // DevKit J1 has no simple single-color LED on a fixed GPIO like XIAO's D21.
 // S3 devkits typically hang a WS2812 RGB on GPIO48 (needs NeoPixel lib for
 // real colors; plain digitalWrite gives only a crude flicker). Set to -1 to
-// disable the heartbeat blink entirely — PKT lines + pipeline stats already
-// prove liveness.
+// disable the heartbeat blink entirely — pipeline queue stats prove liveness.
 #define LED_PIN     -1
 
 struct __attribute__((packed)) Header {
@@ -103,7 +101,7 @@ void setup() {
     };
     if (i2s_channel_init_std_mode(rx_handle, &std_cfg) != ESP_OK) halt("ERR i2s init");
     if (i2s_channel_enable(rx_handle) != ESP_OK) halt("ERR i2s enable");
-    Serial.println("READY binary");  // last ASCII-only line; PKT+packets follow
+    Serial.println("READY binary");  // last ASCII-only line; binary packets follow
 }
 
 void loop() {
@@ -130,7 +128,7 @@ void loop() {
         if (audio[i] < mn) mn = audio[i];
         if (audio[i] > mx) mx = audio[i];
     }
-    if (mn == 0 && mx == 0) Serial.println("ERR mic silent: min=max=0, check SD/WS/SCK wiring");
+    if (mn == 0 && mx == 0 && (pkt_n % 10 == 0)) Serial.println("ERR mic silent: min=max=0, check SD/WS/SCK wiring");
 
     if (bme_ok) {  // BME failure never blocks audio; placeholders persist
         float t = bme.readTemperature(), hh = bme.readHumidity(), pp = bme.readPressure() / 100.0;
@@ -141,9 +139,6 @@ void loop() {
     h.hum = (uint16_t)(last_h * 100);
     h.press = (uint16_t)(last_p * 10);
 
-    Serial.printf("PKT mk=%02X%02X node=%u ts=%llu bme=[%d %u %u] n=%d min=%d max=%d\n",
-        h.marker[0], h.marker[1], h.node_id, (unsigned long long)h.t_us,
-        h.temp, h.hum, h.press, AUDIO_N, mn, mx);
     Serial.write((uint8_t *)&h, sizeof(h));        // 18 B LE
     Serial.write((uint8_t *)audio, sizeof(audio)); // 3200 B; total 3218
 

@@ -15,7 +15,7 @@ class Config:
     DURATION_SECONDS = 1
 
     drone_high_confidence_threshold: float = 0.85
-    drone_detection_threshold: float = 0.30
+    drone_detection_threshold: float = 0.50
     non_drone_high_confidence_threshold: float = 0.10
 
 # 1. [start marker] -- 2 bytes (fixed bytes)

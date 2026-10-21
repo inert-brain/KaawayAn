@@ -14,7 +14,7 @@ import numpy as np
 
 
 # weights live next to this file (anchored so imports work from any cwd)
-ckpt_path = Path(__file__).parent / "drone_classifier_aug_mixed.pt"
+ckpt_path = Path(__file__).parent / "best_candidate.pt"
 
 if not ckpt_path.is_file():
     raise FileNotFoundError(f"Model weights not found: {ckpt_path}")
